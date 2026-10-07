@@ -1,11 +1,11 @@
 ---
 name: pickcat-skill
-description: 获取 Pickcat 社区（PickCat，cdsq.dao3.fun）的帖子信息：推荐内容列表、最新帖子列表、多页翻页浏览、指定帖子的完整详情与正文、帖子热门评论，并可登录账户（Cookie 持久化）、发布评论与查询评论发布状态。当用户提到 pickcat / Pickcat / dao3.fun，或想查看、浏览、汇总、分析该社区的帖子、评论与动态时使用本技能——即使用户没有明确说"用 Pickcat API"。
+description: 获取 Pickcat 社区（PickCat，cdsq.dao3.fun）的帖子信息：推荐内容列表、最新帖子列表、多页翻页浏览、指定帖子的完整详情与正文、帖子热门评论，并可登录账户（Cookie 持久化）、发布评论与帖子、查询评论与帖子的发布状态。当用户提到 pickcat / Pickcat / dao3.fun，或想查看、浏览、汇总、分析该社区的帖子、评论与动态，或想在该社区发帖、评论时使用本技能——即使用户没有明确说"用 Pickcat API"。
 ---
 
 # Pickcat-Skill
 
-获取 [Pickcat 社区](https://cdsq.dao3.fun)的帖子信息。API 为公开接口，浏览与读评论无需登录；发布评论需要先登录。
+获取 [Pickcat 社区](https://cdsq.dao3.fun)的帖子信息。API 为公开接口，浏览与读评论无需登录；发布评论、发布帖子需要先登录。
 
 ## 工具
 
@@ -53,7 +53,7 @@ pickcat.py login --username <账户名> --password <密码>   # 也可省略 --p
 pickcat.py logout                                       # 清除已保存的登录信息
 ```
 
-登录成功后，`pickcat_session` Cookie 自动保存到 `~/.config/.pickcatskill`（JSON，权限 600），之后脚本的所有请求都会自动携带该 Cookie；Cookie 过期时脚本会在 stderr 给出警告，重新 `login` 即可。
+登录成功后，`pickcat_session` Cookie 自动保存到 `~/.config/.pickcatskill`（JSON，权限 600），之后脚本的所有请求都会自动携带该 Cookie；Cookie 过期或被服务端失效时（请求返回 HTTP 401），脚本会在 stderr 给出提示，重新 `login` 即可。
 
 ### 6. 发布评论与评论状态（需登录）
 
@@ -67,15 +67,26 @@ pickcat.py comment-status <submissionId> --wait 30       # 仍在处理中时自
 
 发布是异步的：`comment` 返回 `submissionId` 和初始状态（如 `PENDING_PROVIDER`），需用 `comment-status` 确认最终是否成功（成功时含 `postId` 与楼层号）。
 
+### 7. 发布帖子与帖子状态（需登录）
+
+```bash
+pickcat.py post --title "帖子标题" --markdown "帖子正文（Markdown）"
+echo "长正文" | pickcat.py post --title "标题" --markdown -  # 从 stdin 读取正文
+pickcat.py post-status <postId>                 # 查询发布状态与详情
+pickcat.py post-status <postId> --wait 60       # 仍在处理中时自动轮询（间隔 2 秒）最多 60 秒
+```
+
+`post` 固定以 `DISCUSSION` 类型、`创作与作品` 标签发布（接口限制，暂不能指定其他标签/类型）。发布是异步的：`post` 返回 `postId` 与初始状态（如 `PENDING_PROVIDER`），需用 `post-status` 确认最终是否发布成功（`PUBLISHED`，响应中含 `topicId`、发布时间与编辑额度）；成功后可用 `topic <topicId>` 查看公开页面详情。
+
 **发布纪律（必须遵守）**：
 
-- 发布评论是**以用户账户对外公开的写操作**——只有当用户明确要求发布评论时才可运行 `comment`。
-- 发布内容必须是用户提供或经用户明确确认的文本；不要擅自改写、扩写后直接发布，不要为了测试而发布。
+- 发布评论、发布帖子都是**以用户账户对外公开的写操作**——只有当用户明确要求发布评论或帖子时才可运行 `comment` / `post`。
+- 发布内容必须是用户提供或经用户明确确认的文本（标题与正文都算）；不要擅自改写、扩写后直接发布，不要为了测试而发布。
 - 不得批量、重复或连续发布；一次任务只发布用户要求的内容。
-- 发布后务必用 `comment-status` 确认结果，把最终状态与楼层号报告给用户。
+- 发布后务必用 `comment-status` / `post-status` 确认结果，把最终状态与楼层号（评论）或 `topicId`（帖子）报告给用户。
 - 若未登录，脚本会报错提示先 `login`，此时引导用户提供账户或自行登录，不要替用户编造凭证。
 
-### 7. 通用参数
+### 8. 通用参数
 
 | 参数 | 说明 |
 |---|---|
@@ -115,6 +126,7 @@ pickcat.py comment-status <submissionId> --wait 30       # 仍在处理中时自
 4. 用户想浏览更多 → 按返回提示追加 `--cursor <nextCursor>` 翻页。
 5. 用户要求登录操作（或提供账户密码）→ 跑 `login`，凭证只用于该命令，之后不再复述。
 6. 用户要求发布评论 → 与用户确认内容后跑 `comment`，再跑 `comment-status`（可加 `--wait`）确认发布成功并报告楼层号。
+7. 用户要求发布帖子 → 与用户确认标题与正文后跑 `post`，再跑 `post-status`（可加 `--wait`）确认发布成功并报告 `topicId`。
 
 列表里的 `excerpt` 只是内容预览（已截断），不要把它当成帖子全文；全文必须用 `topic` 获取。
 
@@ -136,10 +148,14 @@ pickcat.py comment-status <submissionId> --wait 30       # 仍在处理中时自
 
 评论状态响应核心字段：`status`（发布状态）、`postNumber`（发布成功后的楼层号）、`postId`（评论 ID）、`request.markdown`（提交的内容）、`riskLevel`（评论风险等级）。
 
+发布帖子响应核心字段：`submissionId`（提交 ID）、`postId`（查询发布状态用的 ID）、`topicId`（主题 ID，发布成功后可用 `topic` 查看）、`status`（当前状态，如 `PENDING_PROVIDER`）。
+
+帖子发布状态响应核心字段：`latestSubmissionStatus`（发布状态，`PUBLISHED` 表示已发布）、`postId`/`topicId`、`request.title`/`request.markdown`（提交的标题与正文）、`publishedAt`（发布时间）、`canEdit`/`editAttemptsUsed`/`editAttemptsRemaining`（编辑额度）、`editBlockedReason`（编辑被阻止原因）。
+
 需要确认某个字段的确切含义时，再读完整 API 文档：[references/api.md](references/api.md)。
 
 ## 注意事项
 
 - 所有 `avatar`、图片、文件的 `url` 都是相对路径，需拼接 base URL 使用：`https://cdsq.dao3.fun` + 路径。
-- 除 `comment`（须遵守"发布纪律"）外，其余功能均为只读获取；请勿对站点发起高频或并发请求，请求失败（如 HTTP 403/429）时稍后重试，不要暴力重试。`comment-status --wait` 已内置 2 秒轮询间隔，不要额外加密轮询。
+- 除 `comment` / `post`（须遵守"发布纪律"）外，其余功能均为只读获取；请勿对站点发起高频或并发请求，请求失败（如 HTTP 403/429）时稍后重试，不要暴力重试。`comment-status` / `post-status` 的 `--wait` 已内置 2 秒轮询间隔，不要额外加密轮询。
 - 如需绕过脚本自行写代码，同样只使用 Python 标准库（`urllib.request`、`json`、`argparse` 等），不引入任何第三方库。

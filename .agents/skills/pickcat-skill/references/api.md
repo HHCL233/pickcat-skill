@@ -634,3 +634,81 @@ GET https://cdsq.dao3.fun/api/v1/post-submissions/{ID}
   "updatedAt": "2026-10-06T07:43:23.268Z" //评论更新时间
 }
 ```
+
+## 发布帖子
+
+```text
+POST https://cdsq.dao3.fun/api/v1/posts
+```
+
+请求标头:
+
+| 键     | 意思                    |
+| ------ | ----------------------- |
+| cookie | Cookie(需包含登录Token) |
+
+请求负荷:
+
+| 键       | 意思                                                  |
+| -------- | ----------------------------------------------------- |
+| markdown | Markdown格式帖子内容                                  |
+| tagIds   | 标签ID,固定为["01a0ab26-84a8-718b-996a-36be3dda4fa4"] |
+| title    | 帖子标题                                              |
+| kind     | 固定为"DISCUSSION"                                    |
+
+响应表头:
+
+| 键         | 意思                      |
+| ---------- | ------------------------- |
+| set-cookie | Cookie,用于获取详情时使用 |
+
+返回内容示例:
+
+```json
+{
+  "submissionId": "01a1102a-ce8f-72ce-8346-f7b709f1b3ea", //帖子提交ID
+  "topicId": "01a0eb91-5d11-7fb0-b998-179add93620f", //帖子ID
+  "postId": "01a1102a-ce91-7e65-85d7-a76573232021", //获取帖子详情ID
+  "status": "PENDING_PROVIDER" //帖子当前状态
+}
+```
+
+## 获取帖子详情
+
+```text
+GET https://cdsq.dao3.fun/api/v1/posts/{ID}
+```
+
+查询参数:
+
+- `ID`: 获取帖子详情ID（发布帖子返回的postId）
+
+请求标头:
+
+| 键     | 意思                    |
+| ------ | ----------------------- |
+| cookie | Cookie(需包含登录Token) |
+
+返回内容示例:
+
+```json
+{
+  "postId": "01a113f4-4054-7f92-b407-c653cfef5275", //获取帖子详情ID
+  "topicId": "01a113f4-4051-7dcb-a5b4-cea6b7f98cfb", //帖子ID
+  "contentRole": "TOPIC_FIRST_POST", //帖子身份
+  "request": {
+    "title": "test", //帖子标题
+    "kind": "DISCUSSION", //帖子类型
+    "tagIds": ["01a0ab26-84a8-718b-996a-36be3dda4fa4"], //帖子标签ID
+    "markdown": "test" //帖子内容
+  },
+  "currentRevision": 1,
+  "latestSubmissionId": "01a113f4-4050-743b-b033-e82f60dc145b", //帖子提交ID
+  "latestSubmissionStatus": "PUBLISHED", //帖子当前状态
+  "publishedAt": "2026-10-07T01:22:26.835Z", //帖子发布时间
+  "editAttemptsUsed": 0, //帖子编辑次数
+  "editAttemptsRemaining": null, //帖子剩余编辑次数
+  "canEdit": true, //帖子是否能编辑
+  "editBlockedReason": null //帖子编辑被阻止原因
+}
+```

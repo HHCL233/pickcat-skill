@@ -3,7 +3,7 @@
 """Pickcat 帖子信息获取工具。
 
 获取 Pickcat 社区（https://cdsq.dao3.fun）的推荐/最新帖子列表、帖子详情、
-热门评论，支持登录后携带会话 Cookie。
+热门评论，支持登录后携带会话 Cookie 发布评论、发布帖子并查询发布状态。
 仅使用 Python 标准库，无任何第三方依赖。
 
 长期配置（登录 Cookie、推荐流会话 Cookie 等）统一保存在 ~/.config/.pickcatskill（JSON，权限 600）。
@@ -28,6 +28,9 @@ TIMEOUT = 30
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".config", ".pickcatskill")
 LOGIN_KEYS = ("pickcat_session", "username", "expiresAt", "savedAt")
 RECOMMENDATIONS_COOKIE_KEY = "recommendationsCookie"
+# 发布帖子的固定参数（接口限制）：类型为 DISCUSSION，标签为「创作与作品」
+POST_KIND = "DISCUSSION"
+POST_TAG_IDS = ["01a0ab26-84a8-718b-996a-36be3dda4fa4"]
 
 
 def fail(message):
@@ -128,6 +131,9 @@ def api_get(path, cursor=None):
                 store_recommendations_cookie(rec_cookie)
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            fail("登录已失效（HTTP 401），服务端拒绝了已保存的 Cookie。请重新运行: "
+                 "login --username <账户名> [--password <密码>]")
         detail = error_detail(exc)
         if "推荐游标" in detail or "RECOMMENDATION_CURSOR_INVALID" in detail:
             fail("推荐流游标已失效（%s）。请去掉 --cursor 重新获取第一页，"
@@ -145,6 +151,30 @@ def error_detail(exc):
         return data.get("message") or data.get("code") or ""
     except Exception:
         return ""
+
+
+def api_post(path, payload, action):
+    headers = build_headers()
+    headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        BASE_URL + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            fail("%s失败：登录已失效（HTTP 401），请重新运行: "
+                 "login --username <账户名> [--password <密码>]" % action)
+        detail = error_detail(exc)
+        fail("%s失败（HTTP %s）%s" % (action, exc.code, ("：" + detail) if detail else ""))
+    except urllib.error.URLError as exc:
+        fail("无法连接 %s: %s" % (BASE_URL, exc.reason))
+    except json.JSONDecodeError:
+        fail("接口返回了无法解析的内容")
 
 
 def require_login():
@@ -457,36 +487,23 @@ def handle_logout(_args):
         print("已清除登录信息（%s）。" % CONFIG_PATH)
 
 
-def handle_comment(args):
-    require_login()
-    markdown = args.markdown
+def resolve_markdown(value, label):
+    markdown = value
     if markdown == "-":
         markdown = sys.stdin.read().strip()
     if not markdown:
-        fail("评论内容不能为空（--markdown）")
-    headers = build_headers()
-    headers["Content-Type"] = "application/json"
-    payload = json.dumps({
+        fail("%s内容不能为空（--markdown）" % label)
+    return markdown
+
+
+def handle_comment(args):
+    require_login()
+    markdown = resolve_markdown(args.markdown, "评论")
+    data = api_post("/api/v1/posts", {
         "topicId": args.id,
         "markdown": markdown,
         "replyToPostNumber": args.reply_to,
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        BASE_URL + "/api/v1/posts",
-        data=payload,
-        method="POST",
-        headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = error_detail(exc)
-        fail("发布评论失败（HTTP %s）%s" % (exc.code, ("：" + detail) if detail else ""))
-    except urllib.error.URLError as exc:
-        fail("无法连接 %s: %s" % (BASE_URL, exc.reason))
-    except json.JSONDecodeError:
-        fail("接口返回了无法解析的内容")
+    }, action="发布评论")
 
     if args.json:
         print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -531,6 +548,65 @@ def handle_comment_status(args):
     if status.startswith("PENDING"):
         waited = ("，已轮询等待 %s 秒" % wait_seconds) if polled else ""
         print("（评论仍在处理中%s，可稍后重查）" % waited)
+
+
+def handle_post(args):
+    require_login()
+    markdown = resolve_markdown(args.markdown, "帖子")
+    data = api_post("/api/v1/posts", {
+        "title": args.title,
+        "kind": POST_KIND,
+        "tagIds": POST_TAG_IDS,
+        "markdown": markdown,
+    }, action="发布帖子")
+
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+    print("已提交，当前状态: %s" % data.get("status"))
+    print("submissionId: %s" % data.get("submissionId"))
+    print("postId: %s" % data.get("postId"))
+    print("topicId: %s" % data.get("topicId"))
+    print("查询发布状态: post-status %s（可加 --wait N 自动等待完成）" % data.get("postId"))
+
+
+def handle_post_status(args):
+    require_login()
+    path = "/api/v1/posts/" + urllib.parse.quote(args.id, safe="")
+    wait_seconds = clamp(args.wait, 0, 120)
+    deadline = time.monotonic() + wait_seconds
+    polled = False
+    while True:
+        data = api_get(path)
+        status = str(data.get("latestSubmissionStatus") or "")
+        if wait_seconds == 0 or not status.startswith("PENDING"):
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        polled = True
+        time.sleep(min(2, remaining))
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+    status = str(data.get("latestSubmissionStatus") or "未知")
+    request_info = data.get("request") or {}
+    print("状态: %s" % status)
+    print("postId: %s" % data.get("postId"))
+    print("topicId: %s" % data.get("topicId"))
+    print("标题: %s" % (request_info.get("title") or "(无标题)"))
+    markdown = (request_info.get("markdown") or "").strip()
+    if markdown:
+        print("内容: %s" % markdown.replace("\n", " "))
+    print("发布时间: %s" % (data.get("publishedAt") or "（尚未发布）"))
+    print("编辑次数: %s | 可编辑: %s" % (data.get("editAttemptsUsed", 0), data.get("canEdit")))
+    if data.get("editBlockedReason"):
+        print("编辑被阻止原因: %s" % data.get("editBlockedReason"))
+    if status.startswith("PENDING"):
+        waited = ("，已轮询等待 %s 秒" % wait_seconds) if polled else ""
+        print("（帖子仍在处理中%s，可稍后重查）" % waited)
+    elif data.get("topicId"):
+        print("查看公开详情: topic %s" % data.get("topicId"))
 
 
 # ---------- 命令行入口 ----------
@@ -592,6 +668,23 @@ def main():
                                "默认 0 表示只查一次，范围 0-120")
     p_status.add_argument("--json", action="store_true", help="输出原始 JSON")
     p_status.set_defaults(func=handle_comment_status)
+
+    p_post = subparsers.add_parser(
+        "post", help="发布帖子（需先登录；类型固定 DISCUSSION，标签固定「创作与作品」）")
+    p_post.add_argument("--title", required=True, help="帖子标题")
+    p_post.add_argument("--markdown", required=True,
+                        help="Markdown 格式帖子正文；值为 - 时从 stdin 读取")
+    p_post.add_argument("--json", action="store_true", help="输出原始 JSON")
+    p_post.set_defaults(func=handle_post)
+
+    p_post_status = subparsers.add_parser(
+        "post-status", help="查询已发布帖子的详情与发布状态（需先登录）")
+    p_post_status.add_argument("id", help="发布帖子时返回的 postId")
+    p_post_status.add_argument("--wait", type=int, default=0,
+                               help="帖子仍在处理中时自动轮询（间隔 2 秒），最多等待 N 秒，"
+                                    "默认 0 表示只查一次，范围 0-120")
+    p_post_status.add_argument("--json", action="store_true", help="输出原始 JSON")
+    p_post_status.set_defaults(func=handle_post_status)
 
     args = parser.parse_args()
     args.func(args)
